@@ -1,14 +1,13 @@
 
 from functools import lru_cache
 
-from importlib import import_module
+import torch
+from transformers import (
+    M2M100ForConditionalGeneration,
+    M2M100Tokenizer
+)
 
-torch = import_module("torch")
-transformers = import_module("transformers")
-M2M100ForConditionalGeneration = transformers.M2M100ForConditionalGeneration
-M2M100Tokenizer = transformers.M2M100Tokenizer
-
-from translator import translate_text
+from translator import translate_text, LANGUAGES
 
 
 MODEL_NAME = "facebook/m2m100_418M"
@@ -18,11 +17,19 @@ DEVICE = torch.device(
 )
 
 M2M100_LANGUAGES = {
+    "English": "en",
     "Tamil": "ta",
-    "Hindi": "hi"
+    "Hindi": "hi",
+    "Telugu": "te",
+    "Malayalam": "ml",
+    "French": "fr",
+    "Spanish": "es",
+    "German": "de",
+    "Arabic": "ar",
+    "Chinese": "zh"
 }
 
-COMPARISON_LANGUAGES = ["Tamil", "Hindi", "Telugu"]
+COMPARISON_LANGUAGES = list(LANGUAGES.keys())
 
 
 @lru_cache(maxsize=1)
@@ -39,18 +46,39 @@ def load_m2m100():
     return tokenizer, model
 
 
-def translate_with_m2m100(text, target_language):
+def translate_with_m2m100(text, source_language, target_language):
     if not isinstance(text, str) or not text.strip():
-        raise ValueError("Please enter text to translate.")
+        raise ValueError("Please enter some text to translate.")
+
+    if source_language not in M2M100_LANGUAGES:
+        raise ValueError(
+            f"M2M100 does not have a configured code for {source_language}."
+        )
 
     if target_language not in M2M100_LANGUAGES:
         raise ValueError(
-            f"M2M100 comparison is not available for {target_language}."
+            f"M2M100 does not have a configured code for {target_language}."
         )
+
+    if source_language == target_language:
+        raise ValueError("Please select two different languages.")
 
     tokenizer, model = load_m2m100()
 
-    tokenizer.src_lang = "en"
+    source_code = M2M100_LANGUAGES[source_language]
+    target_code = M2M100_LANGUAGES[target_language]
+
+    if source_code not in tokenizer.lang_code_to_id:
+        raise ValueError(
+            f"M2M100 tokenizer does not support {source_language}."
+        )
+
+    if target_code not in tokenizer.lang_code_to_id:
+        raise ValueError(
+            f"M2M100 tokenizer does not support {target_language}."
+        )
+
+    tokenizer.src_lang = source_code
 
     inputs = tokenizer(
         text.strip(),
@@ -59,9 +87,7 @@ def translate_with_m2m100(text, target_language):
         max_length=512
     ).to(DEVICE)
 
-    target_language_id = tokenizer.get_lang_id(
-        M2M100_LANGUAGES[target_language]
-    )
+    target_language_id = tokenizer.get_lang_id(target_code)
 
     with torch.no_grad():
         output_tokens = model.generate(
@@ -79,24 +105,33 @@ def translate_with_m2m100(text, target_language):
     return translated_text[0]
 
 
-def compare_models(text, target_language):
+def compare_models(text, source_language, target_language=None):
     if not isinstance(text, str) or not text.strip():
-        raise ValueError("Please enter text to compare.")
+        raise ValueError("Please enter some text to compare.")
+
+    # Keep compatibility with the previous English-to-target function call.
+    if target_language is None:
+        target_language = source_language
+        source_language = "English"
+
+    if source_language not in COMPARISON_LANGUAGES:
+        raise ValueError("The selected source language is not supported.")
 
     if target_language not in COMPARISON_LANGUAGES:
-        raise ValueError("The selected language is not supported.")
+        raise ValueError("The selected target language is not supported.")
+
+    if source_language == target_language:
+        raise ValueError("Please select two different languages.")
 
     nllb_result = translate_text(
         text,
-        "English",
+        source_language,
         target_language
     )
 
-    if target_language == "Telugu":
-        return nllb_result, None
-
     m2m100_result = translate_with_m2m100(
         text,
+        source_language,
         target_language
     )
 
